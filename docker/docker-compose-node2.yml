@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+
+  # Reverse Proxy and Load Balancer (Active/Active with external load balancing or VIP)
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Traefik Dashboard - can be exposed on a different port or not at all on secondary
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - /mnt/nfs_share/traefik_acme:/etc/traefik/acme.json # Shared ACME storage for HA
+
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.your-domain.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))" # CHANGE THIS
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth@docker"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.auth.basicauth.users=user:$$apr1$$HASHED_PASSWORD" # CHANGE THIS (user:hashed_password)
+
+  # Authelia (SSO) - Can be run on both nodes, with shared Redis for session or separate Redis instances
+  authelia:
+    image: authelia/authelia:latest
+    container_name: authelia
+    volumes:
+      - ./authelia/config:/config # Configuration needs to be consistent across nodes
+    environment:
+      - TZ=Europe/Rome
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.authelia.rule=Host(`auth.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.authelia.entrypoints=websecure"
+      - "traefik.http.routers.authelia.tls.certresolver=myresolver"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/verify?rd=https://auth.your-domain.com" # CHANGE THIS
+      - "traefik.http.middlewares.authelia.forwardauth.authresponseheaders=Remote-User, Remote-Groups, Remote-Name, Remote-Email"
+
+  redis:
+    image: redis:alpine
+    container_name: redis_authelia
+    volumes:
+      - ./redis_authelia_data_node2:/data # Separate Redis data for Node 2, or use a shared/replicated Redis
+    restart: unless-stopped
+
+  # Dynamic DNS Client (Can run on both, but only one should actively update to avoid conflicts)
+  # This setup assumes external orchestration or a smart client to prevent conflicts.
+  ddclient:
+    image: linuxserver/ddclient
+    container_name: ddclient
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - DDCLIENT_LOGLEVEL=info
+      - DDCLIENT_INTERVAL=300
+      # Add configuration to only update if a specific condition is met (e.g., primary is down)
+    volumes:
+      - ./ddclient/config:/config
+    restart: unless-stopped
+    network_mode: host
+
+  # Database (Replica)
+  postgres_replica:
+    image: postgres:15-alpine
+    container_name: postgres_replica
+    environment:
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=your_postgres_password # CHANGE THIS
+      - POSTGRES_INITDB_ARGS="--auth-host=md5"
+      - PGDATA=/var/lib/postgresql/data
+      - POSTGRES_PRIMARY_HOST=postgres_node1 # Hostname of the primary PostgreSQL service on Node 1
+      - POSTGRES_PRIMARY_PORT=5432
+      - POSTGRES_PRIMARY_USER=replication_user # A dedicated user for replication
+      - POSTGRES_PRIMARY_PASSWORD=your_replication_password # CHANGE THIS
+      - POSTGRES_PRIMARY_SLOT=replication_slot
+    volumes:
+      - /mnt/nfs_share/postgres_data:/var/lib/postgresql/data # Mount the same NFS share as Node 1
+    restart: unless-stopped
+    depends_on:
+      - traefik # Assuming Traefik might be used for internal routing if needed
+
+  # Nextcloud (Warm Standby / Failover - not running by default, started by failover script)
+  # This service would typically be managed by a failover mechanism (e.g., Keepalived scripts)
+  # and only started if Node 1 fails.
+  # For a true active/passive, the volumes must be shared (e.g., NFS).
+  nextcloud_standby:
+    image: nextcloud:27-apache
+    container_name: nextcloud_standby
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - NEXTCLOUD_TRUSTED_DOMAINS=your-nextcloud-domain.com # CHANGE THIS
+      - DB_TYPE=pgsql
+      - DB_HOST=postgres_replica # Point to the replica database
+      - DB_NAME=nextcloud
+      - DB_USER=nextcloud
+      - DB_PASSWORD=your_postgres_password # CHANGE THIS
+    volumes:
+      - /mnt/nfs_share/nextcloud_data:/var/www/html # Mount the same NFS share as Node 1
+      - ./nextcloud/config:/config # Configuration might need to be replicated or shared as well
+    restart: "no" # Do not start automatically, managed by HA script
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`your-nextcloud-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    depends_on:
+      - postgres_replica
+
+  # Navidrome, Jellyfin, Audiobookshelf would follow a similar warm standby pattern,
+  # with their data volumes mounted from the shared storage and restart policy set to 'no'.
+  # They would be started by the HA failover script when Node 2 becomes active for these services.
+

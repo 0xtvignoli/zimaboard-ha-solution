@@ -1,0 +1,93 @@
+############
+# Server   #
+############
+server:
+  host: 0.0.0.0
+  port: 9091
+
+############
+# Log      #
+############
+log:
+  level: info
+
+############
+# Web      #
+############
+web:
+  external_url: https://auth.your-domain.com # CHANGE THIS
+
+############
+# Authentication Backend #
+############
+authentication_backend:
+  file:
+    path: /config/users.yml
+    password_hashing:
+      algorithm: argon2id
+      memory: 1024
+      iterations: 2
+      parallelism: 2
+      salt_length: 16
+      key_length: 32
+
+############
+# Session  #
+############
+session:
+  secret: "$(authelia-gen-secret)" # Generate with `authelia-gen-secret`
+  domain: your-domain.com # CHANGE THIS
+  redis:
+    host: redis
+    port: 6379
+
+############
+# TOTP     #
+############
+totp:
+  issuer: authelia.your-domain.com # CHANGE THIS
+
+############
+# Access Control #
+############
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "auth.your-domain.com"
+      policy: bypass
+    - domain: "your-nextcloud-domain.com"
+      policy: bypass
+      # You can change this to 'one_factor' or 'two_factor' for authentication
+      # users: ["user1"]
+    - domain: "navidrome.your-domain.com"
+      policy: one_factor
+    - domain: "jellyfin.your-domain.com"
+      policy: one_factor
+    - domain: "audiobookshelf.your-domain.com"
+      policy: one_factor
+
+############
+# Notifier #
+############
+notifier:
+  disable_startup_check: true
+  smtp:
+    host: your_smtp_host # CHANGE THIS
+    port: 587
+    username: your_smtp_username # CHANGE THIS
+    password: your_smtp_password # CHANGE THIS
+    sender: authelia@your-domain.com # CHANGE THIS
+    disable_html_emails: false
+    identifier: your-domain.com # CHANGE THIS
+
+############
+# Storage  #
+############
+storage:
+  local:
+    path: /config/db.sqlite3
+  redis:
+    host: redis
+    port: 6379
+  # For HA, consider a shared database or Redis cluster
+

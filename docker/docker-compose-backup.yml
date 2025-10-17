@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:latest
+    container_name: duplicati
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - CLI_ARGS= # Optional: Add any command line arguments for Duplicati here
+    volumes:
+      - ./duplicati/config:/config # Duplicati configuration and database
+      - /mnt/nfs_share/data_to_backup:/source # Mount the data you want to backup (e.g., Nextcloud data, media)
+      - /mnt/nfs_share/backup_destination:/backups # Mount a local folder for temporary backup storage before upload or for local backups
+    ports:
+      - 8200:8200 # Duplicati web UI
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.duplicati.rule=Host(`backup.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.duplicati.entrypoints=websecure"
+      - "traefik.http.routers.duplicati.tls.certresolver=myresolver"
+      - "traefik.http.services.duplicati.loadbalancer.server.port=8200"
+

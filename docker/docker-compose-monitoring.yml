@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  netdata:
+    image: netdata/netdata
+    container_name: netdata
+    ports:
+      - 19999:19999
+    cap_add:
+      - SYS_PTRACE
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /var/lib/netdata:/var/lib/netdata
+      - /etc/netdata:/etc/netdata
+    restart: unless-stopped
+    environment:
+      - NETDATA_CLAIM_TOKEN=your_claim_token # CHANGE THIS for Netdata Cloud
+      - NETDATA_CLAIM_URL=https://app.netdata.cloud
+      - NETDATA_HOSTNAME=zimaboard-node1 # CHANGE THIS to zimaboard-node2 for the second board
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netdata.rule=Host(`netdata.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.netdata.entrypoints=websecure"
+      - "traefik.http.routers.netdata.tls.certresolver=myresolver"
+      - "traefik.http.services.netdata.loadbalancer.server.port=19999"
+

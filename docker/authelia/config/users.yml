@@ -1,0 +1,6 @@
+users:
+  user1:
+    display_name: "User One"
+    password: "$argon2id$v=19$m=4096,t=3,p=1$c2FsdHlfc3RyaW5n$hashed_password_placeholder" # Generate with `authelia hash-password`
+    email: "user1@your-domain.com" # CHANGE THIS
+

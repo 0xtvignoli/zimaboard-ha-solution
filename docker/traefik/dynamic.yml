@@ -1,0 +1,62 @@
+http:
+  routers:
+    traefik:
+      rule: "Host(`traefik.your-domain.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))" # CHANGE THIS
+      service: api@internal
+      middlewares: [auth]
+      entryPoints: [websecure]
+      tls:
+        certResolver: myresolver
+
+    nextcloud:
+      rule: "Host(`your-nextcloud-domain.com`)" # CHANGE THIS
+      entryPoints: [websecure]
+      tls:
+        certResolver: myresolver
+      service: nextcloud
+
+    navidrome:
+      rule: "Host(`navidrome.your-domain.com`)" # CHANGE THIS
+      entryPoints: [websecure]
+      tls:
+        certResolver: myresolver
+      service: navidrome
+
+    jellyfin:
+      rule: "Host(`jellyfin.your-domain.com`)" # CHANGE THIS
+      entryPoints: [websecure]
+      tls:
+        certResolver: myresolver
+      service: jellyfin
+
+    audiobookshelf:
+      rule: "Host(`audiobookshelf.your-domain.com`)" # CHANGE THIS
+      entryPoints: [websecure]
+      tls:
+        certResolver: myresolver
+      service: audiobookshelf
+
+  services:
+    nextcloud:
+      loadBalancer:
+        servers:
+          - url: "http://nextcloud:80"
+    navidrome:
+      loadBalancer:
+        servers:
+          - url: "http://navidrome:4533"
+    jellyfin:
+      loadBalancer:
+        servers:
+          - url: "http://jellyfin:8096"
+    audiobookshelf:
+      loadBalancer:
+        servers:
+          - url: "http://audiobookshelf:80"
+
+  middlewares:
+    auth:
+      basicAuth:
+        users: # CHANGE THIS (user:hashed_password)
+          - "user:$$apr1$$HASHED_PASSWORD"
+

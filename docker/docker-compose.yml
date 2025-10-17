@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+
+  # Reverse Proxy and Load Balancer
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      - --certificatesresolvers.myresolver.acme.email=your-email@example.com # CHANGE THIS
+      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Traefik Dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/letsencrypt:/letsencrypt
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.your-domain.com`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))" # CHANGE THIS
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth@docker"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=myresolver"
+      - "traefik.http.middlewares.auth.basicauth.users=user:$$apr1$$HASHED_PASSWORD" # CHANGE THIS (user:hashed_password)
+
+  # Dynamic DNS Client
+  ddclient:
+    image: linuxserver/ddclient
+    container_name: ddclient
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - DDCLIENT_LOGLEVEL=info
+      - DDCLIENT_INTERVAL=300
+    volumes:
+      - ./ddclient/config:/config
+    restart: unless-stopped
+    network_mode: host
+
+# Placeholder for shared storage configuration (e.g., NFS mount points on the host systems)
+# For HA, volumes like ./postgres/data, ./nextcloud/data, ./navidrome/data, ./jellyfin/config, ./audiobookshelf/config
+# should ideally point to a shared storage solution (e.g., NFS, SMB) or be replicated.
+# Example for NFS (mount on host first, then reference here):
+# volumes:
+#   - /mnt/nfs_share/postgres_data:/var/lib/postgresql/data
+
+  # Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=your_postgres_password # CHANGE THIS
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Nextcloud
+  nextcloud:
+    image: nextcloud:27-apache
+    container_name: nextcloud
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - NEXTCLOUD_TRUSTED_DOMAINS=your-nextcloud-domain.com # CHANGE THIS
+      - DB_TYPE=pgsql
+      - DB_HOST=postgres
+      - DB_NAME=nextcloud
+      - DB_USER=nextcloud
+      - DB_PASSWORD=your_postgres_password # CHANGE THIS
+    volumes:
+      - ./nextcloud/data:/var/www/html
+      - ./nextcloud/config:/config
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`your-nextcloud-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls.certresolver=myresolver"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+
+  # Navidrome (Music Server)
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    environment:
+      - ND_SCANSCHEDULE=1h
+      - ND_LOGLEVEL=info
+      - ND_SESSIONTIMEOUT=24h
+      - ND_BASEURL=navidrome.your-domain.com # CHANGE THIS
+    volumes:
+      - ./navidrome/data:/data
+      - ./navidrome/music:/music:ro # Mount your music library here
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.navidrome.rule=Host(`navidrome.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.navidrome.entrypoints=websecure"
+      - "traefik.http.routers.navidrome.tls.certresolver=myresolver"
+      - "traefik.http.services.navidrome.loadbalancer.server.port=4533"
+
+  # Jellyfin (Media Server)
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - ./jellyfin/media:/media:ro # Mount your media library here
+    # Add GPU passthrough for hardware transcoding if available
+    # devices:
+    #   - /dev/dri:/dev/dri
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.jellyfin.entrypoints=websecure"
+      - "traefik.http.routers.jellyfin.tls.certresolver=myresolver"
+      - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"
+
+  # Audiobookshelf (Audiobook Server)
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+    volumes:
+      - ./audiobookshelf/config:/config
+      - ./audiobookshelf/audiobooks:/audiobooks # Mount your audiobooks library here
+      - ./audiobookshelf/podcasts:/podcasts # Mount your podcasts library here
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.audiobookshelf.rule=Host(`audiobookshelf.your-domain.com`)" # CHANGE THIS
+      - "traefik.http.routers.audiobookshelf.entrypoints=websecure"
+      - "traefik.http.routers.audiobookshelf.tls.certresolver=myresolver"
+      - "traefik.http.services.audiobookshelf.loadbalancer.server.port=80"
+
